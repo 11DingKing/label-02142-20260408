@@ -3,6 +3,8 @@ package com.navigation.service.impl;
 import com.navigation.dto.ServerInfoDTO;
 import com.navigation.service.ServerInfoService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import oshi.SystemInfo;
 import oshi.hardware.CentralProcessor;
@@ -15,11 +17,13 @@ import oshi.software.os.OperatingSystem;
 
 import jakarta.annotation.PostConstruct;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 服务器信息服务实现类
  * 使用 oshi-core 库获取系统信息
+ * 支持异步执行和缓存
  */
 @Slf4j
 @Service
@@ -103,6 +107,42 @@ public class ServerInfoServiceImpl implements ServerInfoService {
     }
 
     @Override
+    @Async("serverInfoExecutor")
+    @Cacheable(value = "serverInfo", key = "'all'", sync = true)
+    public CompletableFuture<ServerInfoDTO> getServerInfoAsync() {
+        log.debug("[ServerInfoService] 异步获取服务器综合信息");
+        try {
+            // 并行获取各个信息
+            CompletableFuture<ServerInfoDTO.CpuInfo> cpuFuture = getCpuInfoAsync();
+            CompletableFuture<ServerInfoDTO.MemoryInfo> memoryFuture = getMemoryInfoAsync();
+            CompletableFuture<ServerInfoDTO.DiskInfo> diskFuture = getDiskInfoAsync();
+            CompletableFuture<ServerInfoDTO.NetworkInfo> networkFuture = getNetworkInfoAsync();
+            
+            // 等待所有任务完成
+            CompletableFuture.allOf(cpuFuture, memoryFuture, diskFuture, networkFuture).join();
+            
+            ServerInfoDTO info = ServerInfoDTO.builder()
+                    .cpu(cpuFuture.get())
+                    .memory(memoryFuture.get())
+                    .disk(diskFuture.get())
+                    .network(networkFuture.get())
+                    .uptime(os.getSystemUptime())
+                    .osName(os.toString())
+                    .hostname(os.getNetworkParams().getHostName())
+                    .build();
+            
+            log.info("[ServerInfoService] 异步获取服务器信息成功 - CPU: {}%, Memory: {}%",
+                    info.getCpu().getUsage(),
+                    info.getMemory().getUsagePercent());
+            
+            return CompletableFuture.completedFuture(info);
+        } catch (Exception e) {
+            log.error("[ServerInfoService] 异步获取服务器信息失败: {}", e.getMessage(), e);
+            return CompletableFuture.failedFuture(e);
+        }
+    }
+
+    @Override
     public ServerInfoDTO.CpuInfo getCpuInfo() {
         log.trace("[ServerInfoService] 获取 CPU 信息");
         try {
@@ -124,6 +164,21 @@ public class ServerInfoServiceImpl implements ServerInfoService {
         } catch (Exception e) {
             log.error("[ServerInfoService] 获取 CPU 信息失败: {}", e.getMessage(), e);
             throw e;
+        }
+    }
+
+    @Override
+    @Async("serverInfoExecutor")
+    @Cacheable(value = "cpuInfo", key = "'cpu'", sync = true)
+    public CompletableFuture<ServerInfoDTO.CpuInfo> getCpuInfoAsync() {
+        log.debug("[ServerInfoService] 异步获取 CPU 信息");
+        try {
+            ServerInfoDTO.CpuInfo cpuInfo = getCpuInfo();
+            log.debug("[ServerInfoService] 异步获取 CPU 信息成功: usage={}%", cpuInfo.getUsage());
+            return CompletableFuture.completedFuture(cpuInfo);
+        } catch (Exception e) {
+            log.error("[ServerInfoService] 异步获取 CPU 信息失败: {}", e.getMessage(), e);
+            return CompletableFuture.failedFuture(e);
         }
     }
 
@@ -151,6 +206,21 @@ public class ServerInfoServiceImpl implements ServerInfoService {
         } catch (Exception e) {
             log.error("[ServerInfoService] 获取内存信息失败: {}", e.getMessage(), e);
             throw e;
+        }
+    }
+
+    @Override
+    @Async("serverInfoExecutor")
+    @Cacheable(value = "memoryInfo", key = "'memory'", sync = true)
+    public CompletableFuture<ServerInfoDTO.MemoryInfo> getMemoryInfoAsync() {
+        log.debug("[ServerInfoService] 异步获取内存信息");
+        try {
+            ServerInfoDTO.MemoryInfo memoryInfo = getMemoryInfo();
+            log.debug("[ServerInfoService] 异步获取内存信息成功: usage={}%", memoryInfo.getUsagePercent());
+            return CompletableFuture.completedFuture(memoryInfo);
+        } catch (Exception e) {
+            log.error("[ServerInfoService] 异步获取内存信息失败: {}", e.getMessage(), e);
+            return CompletableFuture.failedFuture(e);
         }
     }
 
@@ -185,6 +255,21 @@ public class ServerInfoServiceImpl implements ServerInfoService {
         } catch (Exception e) {
             log.error("[ServerInfoService] 获取磁盘信息失败: {}", e.getMessage(), e);
             throw e;
+        }
+    }
+
+    @Override
+    @Async("serverInfoExecutor")
+    @Cacheable(value = "diskInfo", key = "'disk'", sync = true)
+    public CompletableFuture<ServerInfoDTO.DiskInfo> getDiskInfoAsync() {
+        log.debug("[ServerInfoService] 异步获取磁盘信息");
+        try {
+            ServerInfoDTO.DiskInfo diskInfo = getDiskInfo();
+            log.debug("[ServerInfoService] 异步获取磁盘信息成功: usage={}%", diskInfo.getUsagePercent());
+            return CompletableFuture.completedFuture(diskInfo);
+        } catch (Exception e) {
+            log.error("[ServerInfoService] 异步获取磁盘信息失败: {}", e.getMessage(), e);
+            return CompletableFuture.failedFuture(e);
         }
     }
 
@@ -236,6 +321,22 @@ public class ServerInfoServiceImpl implements ServerInfoService {
         } catch (Exception e) {
             log.error("[ServerInfoService] 获取网络信息失败: {}", e.getMessage(), e);
             throw e;
+        }
+    }
+
+    @Override
+    @Async("serverInfoExecutor")
+    @Cacheable(value = "networkInfo", key = "'network'", sync = true)
+    public CompletableFuture<ServerInfoDTO.NetworkInfo> getNetworkInfoAsync() {
+        log.debug("[ServerInfoService] 异步获取网络信息");
+        try {
+            ServerInfoDTO.NetworkInfo networkInfo = getNetworkInfo();
+            log.debug("[ServerInfoService] 异步获取网络信息成功: tx={} B/s, rx={} B/s",
+                    networkInfo.getTxBytes(), networkInfo.getRxBytes());
+            return CompletableFuture.completedFuture(networkInfo);
+        } catch (Exception e) {
+            log.error("[ServerInfoService] 异步获取网络信息失败: {}", e.getMessage(), e);
+            return CompletableFuture.failedFuture(e);
         }
     }
 }

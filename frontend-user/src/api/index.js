@@ -23,6 +23,104 @@ const logger = {
   }
 }
 
+// 全局 loading 状态管理
+const loadingState = {
+  count: 0,
+  listeners: [],
+  
+  add() {
+    this.count++
+    this.notify()
+  },
+  
+  remove() {
+    if (this.count > 0) {
+      this.count--
+      this.notify()
+    }
+  },
+  
+  subscribe(listener) {
+    this.listeners.push(listener)
+    return () => {
+      this.listeners = this.listeners.filter(l => l !== listener)
+    }
+  },
+  
+  notify() {
+    this.listeners.forEach(listener => listener(this.count > 0))
+  }
+}
+
+// 错误码映射
+const ERROR_MESSAGES = {
+  400: '请求参数错误',
+  401: '未授权，请登录',
+  403: '拒绝访问',
+  404: '请求资源不存在',
+  408: '请求超时',
+  500: '服务器内部错误',
+  502: '网关错误',
+  503: '服务不可用',
+  504: '网关超时'
+}
+
+// 可重试的错误码
+const RETRYABLE_ERRORS = [408, 500, 502, 503, 504, 'ECONNABORTED', 'ETIMEDOUT']
+
+// 最大重试次数
+const MAX_RETRIES = 2
+
+// 重试延迟（毫秒）
+const RETRY_DELAY = 1000
+
+/**
+ * 延迟函数
+ * @param {number} ms - 延迟毫秒数
+ */
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/**
+ * 检查是否应该重试
+ * @param {Object} error - 错误对象
+ * @param {number} retryCount - 当前重试次数
+ */
+function shouldRetry(error, retryCount) {
+  if (retryCount >= MAX_RETRIES) return false
+  
+  const status = error.response?.status
+  const code = error.code
+  
+  if (RETRYABLE_ERRORS.includes(status)) return true
+  if (RETRYABLE_ERRORS.includes(code)) return true
+  
+  return false
+}
+
+/**
+ * 获取错误消息
+ * @param {Object} error - 错误对象
+ */
+function getErrorMessage(error) {
+  const status = error.response?.status
+  
+  if (status && ERROR_MESSAGES[status]) {
+    return ERROR_MESSAGES[status]
+  }
+  
+  if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+    return '请求超时，请稍后重试'
+  }
+  
+  if (error.code === 'ERR_NETWORK' || error.message.includes('Network Error')) {
+    return '网络错误，请检查网络连接'
+  }
+  
+  return error.message || '请求失败'
+}
+
 // 创建 axios 实例
 const apiClient = axios.create({
   timeout: 10000,
@@ -35,10 +133,20 @@ const apiClient = axios.create({
 apiClient.interceptors.request.use(
   (config) => {
     logger.debug('API', `发起请求: ${config.method?.toUpperCase()} ${config.url}`)
+    
+    // 标记请求开始时间
+    config.metadata = { startTime: Date.now() }
+    
+    // 显示 loading（可选，根据需要）
+    if (config.showLoading !== false) {
+      loadingState.add()
+    }
+    
     return config
   },
   (error) => {
     logger.error('API', '请求配置错误:', error)
+    loadingState.remove()
     return Promise.reject(error)
   }
 )
@@ -46,14 +154,62 @@ apiClient.interceptors.request.use(
 // 响应拦截器
 apiClient.interceptors.response.use(
   (response) => {
-    logger.debug('API', `请求成功: ${response.config.url}`, { status: response.status })
+    const duration = Date.now() - response.config.metadata?.startTime
+    logger.debug('API', `请求成功: ${response.config.url}`, { 
+      status: response.status,
+      duration: `${duration}ms`
+    })
+    
+    // 隐藏 loading
+    if (response.config.showLoading !== false) {
+      loadingState.remove()
+    }
+    
     return response.data
   },
-  (error) => {
-    logger.error('API', `请求失败: ${error.config?.url}`, {
+  async (error) => {
+    const config = error.config
+    
+    // 隐藏 loading
+    if (config?.showLoading !== false) {
+      loadingState.remove()
+    }
+    
+    // 初始化重试计数
+    if (!config) {
+      config = {}
+    }
+    config._retryCount = config._retryCount || 0
+    
+    // 检查是否应该重试
+    if (shouldRetry(error, config._retryCount)) {
+      config._retryCount++
+      
+      logger.warn('API', `请求失败，正在重试 (${config._retryCount}/${MAX_RETRIES}): ${config.url}`, {
+        status: error.response?.status,
+        code: error.code
+      })
+      
+      // 延迟后重试
+      await delay(RETRY_DELAY * config._retryCount)
+      
+      return apiClient(config)
+    }
+    
+    // 记录错误
+    const errorMessage = getErrorMessage(error)
+    logger.error('API', `请求失败: ${config?.url || 'unknown'}`, {
       status: error.response?.status,
-      message: error.message
+      code: error.code,
+      message: errorMessage
     })
+    
+    // 增强错误对象
+    error.userMessage = errorMessage
+    error.status = error.response?.status
+    error.isTimeout = error.code === 'ECONNABORTED' || error.message?.includes('timeout')
+    error.isNetworkError = error.code === 'ERR_NETWORK' || error.message?.includes('Network Error')
+    
     return Promise.reject(error)
   }
 )
@@ -112,7 +268,8 @@ async function fetchUnsplashImage() {
     const response = await axios.get(url, {
       headers: {
         Authorization: `Client-ID ${bgConfig.unsplashAccessKey}`
-      }
+      },
+      timeout: 10000
     })
     logger.info('Background', 'Unsplash 图片获取成功')
     return response.data.urls.regular
@@ -130,7 +287,9 @@ async function fetchBingImage() {
   
   try {
     // 使用代理或直接访问必应 API
-    const response = await axios.get('https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1')
+    const response = await axios.get('https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1', {
+      timeout: 10000
+    })
     const imagePath = response.data.images[0].url
     const imageUrl = `https://www.bing.com${imagePath}`
     logger.info('Background', '必应壁纸获取成功')
@@ -181,7 +340,9 @@ export async function fetchDailyQuote() {
   logger.info('DailyQuote', '开始获取每日一言', { type: randomType })
   
   try {
-    const response = await axios.get(`https://v1.hitokoto.cn/?c=${randomType}&encode=json`)
+    const response = await axios.get(`https://v1.hitokoto.cn/?c=${randomType}&encode=json`, {
+      timeout: 10000
+    })
     const quote = {
       content: response.data.hitokoto,
       source: response.data.from || '佚名',
@@ -219,7 +380,8 @@ export async function fetchWeather(cityId) {
     // 和风天气 API - 使用 URL 参数方式传递 API KEY
     const apiHost = weatherConfig.apiHost || 'devapi.qweather.com'
     const response = await axios.get(
-      `https://${apiHost}/v7/weather/now?location=${cityId}&key=${weatherConfig.apiKey}`
+      `https://${apiHost}/v7/weather/now?location=${cityId}&key=${weatherConfig.apiKey}`,
+      { timeout: 10000 }
     )
     
     if (response.data.code === '200') {
@@ -362,6 +524,20 @@ export async function fetchNetworkInfo() {
   }
 }
 
+// 导出 loading 状态管理
+export const loading = {
+  isLoading: () => loadingState.count > 0,
+  subscribe: (listener) => loadingState.subscribe(listener)
+}
+
+// 导出错误处理工具
+export const errorHandler = {
+  getErrorMessage,
+  shouldRetry,
+  ERROR_MESSAGES,
+  RETRYABLE_ERRORS
+}
+
 export default {
   fetchBackgroundImage,
   fetchDailyQuote,
@@ -370,5 +546,7 @@ export default {
   fetchCpuInfo,
   fetchMemoryInfo,
   fetchDiskInfo,
-  fetchNetworkInfo
+  fetchNetworkInfo,
+  loading,
+  errorHandler
 }
