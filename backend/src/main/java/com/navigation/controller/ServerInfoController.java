@@ -1,0 +1,136 @@
+package com.navigation.controller;
+
+import com.navigation.common.Result;
+import com.navigation.dto.ServerInfoDTO;
+import com.navigation.service.ServerInfoService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * 服务器信息控制器
+ * 提供服务器状态监控 API
+ */
+@Slf4j
+@RestController
+@RequestMapping("/api/server")
+@RequiredArgsConstructor
+public class ServerInfoController {
+
+    private final ServerInfoService serverInfoService;
+
+    /**
+     * 获取服务器综合信息
+     * 
+     * @return 服务器信息
+     */
+    @GetMapping("/info")
+    public ServerInfoDTO getServerInfo() {
+        log.debug("[ServerInfoController] 收到获取服务器综合信息请求");
+        long startTime = System.currentTimeMillis();
+        try {
+            ServerInfoDTO info = serverInfoService.getServerInfo();
+            log.info("[ServerInfoController] 服务器信息获取成功 - 耗时: {}ms, CPU: {}%, Memory: {}%",
+                    System.currentTimeMillis() - startTime,
+                    info.getCpu() != null ? info.getCpu().getUsage() : "N/A",
+                    info.getMemory() != null ? info.getMemory().getUsagePercent() : "N/A");
+            return info;
+        } catch (Exception e) {
+            log.error("[ServerInfoController] 获取服务器信息失败 - 耗时: {}ms, 错误: {}",
+                    System.currentTimeMillis() - startTime, e.getMessage(), e);
+            throw e;
+        }
+    }
+
+    /**
+     * 获取 CPU 信息
+     * 
+     * @return CPU 信息
+     */
+    @GetMapping("/cpu")
+    public Result<ServerInfoDTO.CpuInfo> getCpuInfo() {
+        log.debug("[ServerInfoController] 收到获取 CPU 信息请求");
+        long startTime = System.currentTimeMillis();
+        try {
+            ServerInfoDTO.CpuInfo cpuInfo = serverInfoService.getCpuInfo();
+            log.info("[ServerInfoController] CPU 信息获取成功 - 耗时: {}ms, 使用率: {}%, 核心数: {}",
+                    System.currentTimeMillis() - startTime,
+                    cpuInfo.getUsage(),
+                    cpuInfo.getCores());
+            return Result.success(cpuInfo);
+        } catch (Exception e) {
+            log.error("[ServerInfoController] 获取 CPU 信息失败 - 耗时: {}ms, 错误: {}",
+                    System.currentTimeMillis() - startTime, e.getMessage(), e);
+            throw e;
+        }
+    }
+
+    /**
+     * 获取内存信息
+     * 
+     * @return 内存信息
+     */
+    @GetMapping("/memory")
+    public Result<ServerInfoDTO.MemoryInfo> getMemoryInfo() {
+        log.debug("[ServerInfoController] 收到获取内存信息请求");
+        long startTime = System.currentTimeMillis();
+        try {
+            ServerInfoDTO.MemoryInfo memoryInfo = serverInfoService.getMemoryInfo();
+            log.info("[ServerInfoController] 内存信息获取成功 - 耗时: {}ms, 使用率: {}%",
+                    System.currentTimeMillis() - startTime,
+                    memoryInfo.getUsagePercent());
+            return Result.success(memoryInfo);
+        } catch (Exception e) {
+            log.error("[ServerInfoController] 获取内存信息失败 - 耗时: {}ms, 错误: {}",
+                    System.currentTimeMillis() - startTime, e.getMessage(), e);
+            throw e;
+        }
+    }
+
+    /**
+     * 获取磁盘信息
+     * 
+     * @return 磁盘信息
+     */
+    @GetMapping("/disk")
+    public Result<ServerInfoDTO.DiskInfo> getDiskInfo() {
+        log.debug("[ServerInfoController] 收到获取磁盘信息请求");
+        long startTime = System.currentTimeMillis();
+        try {
+            ServerInfoDTO.DiskInfo diskInfo = serverInfoService.getDiskInfo();
+            log.info("[ServerInfoController] 磁盘信息获取成功 - 耗时: {}ms, 使用率: {}%",
+                    System.currentTimeMillis() - startTime,
+                    diskInfo.getUsagePercent());
+            return Result.success(diskInfo);
+        } catch (Exception e) {
+            log.error("[ServerInfoController] 获取磁盘信息失败 - 耗时: {}ms, 错误: {}",
+                    System.currentTimeMillis() - startTime, e.getMessage(), e);
+            throw e;
+        }
+    }
+
+    /**
+     * 获取网络信息
+     * 
+     * @return 网络信息
+     */
+    @GetMapping("/network")
+    public Result<ServerInfoDTO.NetworkInfo> getNetworkInfo() {
+        log.debug("[ServerInfoController] 收到获取网络信息请求");
+        long startTime = System.currentTimeMillis();
+        try {
+            ServerInfoDTO.NetworkInfo networkInfo = serverInfoService.getNetworkInfo();
+            log.info("[ServerInfoController] 网络信息获取成功 - 耗时: {}ms, 上传: {} B/s, 下载: {} B/s",
+                    System.currentTimeMillis() - startTime,
+                    networkInfo.getTxBytes(),
+                    networkInfo.getRxBytes());
+            return Result.success(networkInfo);
+        } catch (Exception e) {
+            log.error("[ServerInfoController] 获取网络信息失败 - 耗时: {}ms, 错误: {}",
+                    System.currentTimeMillis() - startTime, e.getMessage(), e);
+            throw e;
+        }
+    }
+}
